@@ -145,7 +145,7 @@ render = unlines . V.toList . V.map (foldMap (pure . renderPiece))
 renderPiece :: RawPiece -> Char
 renderPiece (Wall Nothing)  = '■'
 renderPiece (Wall (Just n)) = intToDigit $ fromEnum n
-renderPiece Free            = '□'
+renderPiece Free            = '_'
 renderPiece Light           = '○'
 
 adjacentCells
