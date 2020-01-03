@@ -67,6 +67,8 @@ pigeonhole3 cfg =
         _ -> Nothing
     )
 
+-- | Generalisation of 'pigeonhole3'.
+--   Also applicable to walls with label other than 3.
 pigeonhole :: Heuristics
 pigeonhole cfg@Config{..} partial =
   L.fold
