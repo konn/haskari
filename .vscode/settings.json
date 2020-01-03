@@ -1,0 +1,6 @@
+{
+  "files.exclude": {
+    "**/.stack-work": true,
+    "haskari.cabal": true
+  }
+}

@@ -1,0 +1,139 @@
+{-# LANGUAGE DeriveAnyClass, DeriveDataTypeable, DeriveGeneric    #-}
+{-# LANGUAGE DerivingStrategies, PatternSynonyms, RecordWildCards #-}
+{-# LANGUAGE TypeFamilies                                         #-}
+module Puzzles.Akari.Types where
+import           Control.Applicative
+import           Data.Char
+import           Data.Hashable
+import           Data.HashMap.Strict (HashMap)
+import qualified Data.HashMap.Strict as HM
+import           Data.Profunctor
+import           Data.Vector         (Vector)
+import qualified Data.Vector         as V
+import           Data.Word
+import           Ersatz              hiding ((&&), (||))
+import           GHC.Generics
+import           Type.Reflection
+
+data Configuration =
+  Config { boardHeight :: !Int
+         , boardWidth  :: !Int
+         , walls       :: Walls
+         }
+  deriving (Show, Eq, Ord, Generic, Typeable)
+
+type WallSpec = Maybe Word8
+
+fromRaw :: WallSpec -> Piece
+fromRaw = wall
+
+type Walls = HashMap Position WallSpec
+
+(!) :: Vector (Vector a) -> Position -> a
+(!) b (Pos x y) = b V.! y V.! x
+
+(!?) :: Vector (Vector a) -> Position -> Maybe a
+b !? Pos x y = (b V.!? y) >>= (V.!? x)
+
+generateBoard
+  :: Configuration -> (Position -> a) -> Vector (Vector a)
+generateBoard Config{..} act =
+  V.generate boardHeight $ \posY ->
+    V.generate boardWidth $ \posX ->
+      act Pos{..}
+
+generateBoardM
+  :: Monad m
+  => Configuration -> (Position -> m a) -> m (Vector (Vector a))
+generateBoardM Config{..} act =
+  V.generateM boardHeight $ \posY ->
+    V.generateM boardWidth $ \posX ->
+      act Pos{..}
+
+newtype Piece = Piece Bit3
+  deriving (Show, Generic, Typeable)
+  deriving anyclass (Variable, Boolean, Equatable)
+
+wall :: Maybe Word8 -> Piece
+wall (Just 0) = Piece $ encode 0
+wall (Just 1) = Piece $ encode 1
+wall (Just 2) = Piece $ encode 2
+wall (Just 3) = Piece $ encode 3
+wall (Just 4) = Piece $ encode 4
+wall (Just n) = error $ "Numbered wall must be of range 0-4, but got: " ++ show n
+wall Nothing  = Piece $ encode 5
+
+data RawPiece = Wall (Maybe Word8) | Light | Free
+  deriving (Read, Show, Eq, Ord)
+
+light, free :: Piece
+light = Piece $ encode 6
+free  = Piece $ encode 7
+
+type Board = Vector (Vector Piece)
+type RawBoard = Vector (Vector RawPiece)
+
+instance Codec Piece where
+  type Decoded Piece = RawPiece
+  encode (Wall n) = wall n
+  encode Light    = light
+  encode Free     = free
+  decode s (Piece n) = do
+    w <- decode s n
+    if 0 <= w && w <= 4
+    then pure $ Wall $ Just $ fromIntegral w
+    else if w == 5
+    then pure $ Wall Nothing
+    else if w == 6
+    then pure Light
+    else if w == 7
+    then pure Free
+    else empty
+
+data Position = Pos { posX :: !Int, posY :: !Int }
+  deriving (Eq, Ord, Generic, Typeable)
+  deriving anyclass (Hashable)
+
+instance Show Position where
+  showsPrec _ Pos{..} = showParen True $
+    shows posX . showString ", " . shows posY
+
+instance Num Position where
+  fromInteger = Pos <$> fromInteger <*> fromInteger
+  Pos x y + Pos x' y' = Pos (x + x') (y + y')
+  Pos x y - Pos x' y' = Pos (x - x') (y - y')
+  negate (Pos x y) = Pos (negate x) (negate y)
+  Pos x y * Pos x' y' = Pos (x * x') (y * y')
+  abs (Pos x y) = Pos (abs x) (abs y)
+  signum (Pos x y) = Pos (signum x) (signum y)
+
+inBoard :: Configuration -> Position -> Bool
+inBoard Config{..} Pos{..} =
+  0 <= posX && posX < boardWidth
+  && 0 <= posY && posY < boardHeight
+
+perp :: Position -> Position
+perp (Pos x y) = Pos y x
+
+getPlacement :: Position -> Configuration -> Maybe WallSpec
+getPlacement = lmap walls . HM.lookup
+
+forBoardM_ :: Monad m => Vector (Vector a) -> (Position -> a -> m b) -> m ()
+forBoardM_ bd act = V.imapM_ (\posY -> V.imapM_ $ \posX -> act Pos{..}) bd
+
+forBoard :: Vector (Vector a) -> (Position -> a -> b) -> Vector (Vector b)
+forBoard bd act = V.imap (\posY -> V.imap $ \posX -> act Pos{..}) bd
+
+initialBoard :: Configuration -> RawBoard
+initialBoard cnf = generateBoard cnf $ \pos ->
+  maybe Free Wall $ getPlacement pos cnf
+
+render
+  :: RawBoard -> String
+render = unlines . V.toList . V.map (foldMap (pure . renderPiece))
+
+renderPiece :: RawPiece -> Char
+renderPiece (Wall Nothing)  = '■'
+renderPiece (Wall (Just n)) = intToDigit $ fromEnum n
+renderPiece Free            = '□'
+renderPiece Light           = '○'
