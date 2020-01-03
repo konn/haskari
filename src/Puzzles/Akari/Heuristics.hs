@@ -8,6 +8,7 @@ import           Data.Char
 import           Data.Foldable
 import qualified Data.HashMap.Strict        as HM
 import qualified Data.HashSet               as HS
+import qualified Data.List                  as List
 import           Data.Maybe
 import qualified Data.Vector                as V
 import qualified Data.Vector.Mutable        as MV
@@ -22,7 +23,7 @@ type PartialSolution = HM.HashMap Position RawPiece
 type Heuristics = Configuration -> PartialSolution -> PartialSolution
 
 defaultHeuristics :: [Heuristics]
-defaultHeuristics = [triviallyFree, maximal, onlySlot, pigeonhole3]
+defaultHeuristics = [triviallyFree, maximal, onlySlot, pigeonhole3, pigeonhole]
 
 -- | Applies heuristics successively until fixed-point.
 applyHeuristics
@@ -65,6 +66,28 @@ pigeonhole3 cfg =
         _ -> Nothing
     )
 
+pigeonhole :: Heuristics
+pigeonhole cfg@Config{..} partial =
+  L.fold
+    (L.handles folded
+    $ lmap (,Free) L.hashMap
+    )
+  $ HM.mapMaybeWithKey
+    (\pos -> (>>=
+      (\n -> do
+        let (_, lights, indets) = adjsLightsIndets cfg pos partial
+            diags =
+              [ d
+              | d <- diagonalCells cfg pos
+              , length (adjacentCells cfg d `List.intersect` indets)
+                  == 2
+              ]
+        guard $ length indets == fromIntegral n - length lights + 1
+        pure diags
+      ))
+    )
+    walls
+
 -- | Marks all cells as free, which is
 --
 --     * Lit by a light, or
@@ -97,13 +120,14 @@ onlySlot cfg partial =
       (lmap
           (\(cur, adjs0) -> do
             let adjs = HS.delete cur adjs0
-            guard $
-              isNothing (HM.lookup cur partial)
-              && all (\pos -> maybe False (/= Light) $ HM.lookup pos partial) adjs
+            guard $ isNothing (HM.lookup cur partial)
+                && all (  (== Just Free)
+                       . flip HM.lookup  partial
+                       )
+                      adjs
             return (cur, Light)
           )
-      $ L.handles _Just
-        L.hashMap
+      $ L.handles _Just L.hashMap
       )
      segs
 
