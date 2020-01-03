@@ -47,13 +47,12 @@ lightInvariant :: (MonadState s m, HasSAT s)
 lightInvariant cfg board =
   forBoardM_ (classifySegments cfg) $ \pos pts0 ->
     when (isNothing $ getPlacement pos cfg) $
-    let conns = HS.toList $ HS.delete pos pts0
+    let conns = map (board !) $ HS.toList $ HS.delete pos pts0
     in assert $
           board ! pos === light &&
-            all ((=== free) . (board !))
-            conns
+            all (=== free) conns
           ||    board ! pos === free
-             && any ((=== light) . (board !)) conns
+             && any (=== light) conns
 
 initialiseBoard
   :: (MonadState s m, HasSAT s)
