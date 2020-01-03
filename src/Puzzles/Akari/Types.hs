@@ -3,11 +3,16 @@
 {-# LANGUAGE TypeFamilies                                         #-}
 module Puzzles.Akari.Types where
 import           Control.Applicative
+import           Control.Monad
+import           Control.Monad.ST
 import           Data.Char
 import           Data.Hashable
 import           Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
+import qualified Data.HashSet        as HS
+import           Data.Maybe
 import           Data.Profunctor
+import           Data.UnionFind.ST
 import           Data.Vector         (Vector)
 import qualified Data.Vector         as V
 import           Data.Word
@@ -24,8 +29,13 @@ data Configuration =
 
 type WallSpec = Maybe Word8
 
-fromRaw :: WallSpec -> Piece
-fromRaw = wall
+fromRawWall :: WallSpec -> Piece
+fromRawWall = wall
+
+fromRaw :: RawPiece -> Piece
+fromRaw (Wall w) = wall w
+fromRaw Light    = light
+fromRaw Free     = free
 
 type Walls = HashMap Position WallSpec
 
@@ -137,3 +147,71 @@ renderPiece (Wall Nothing)  = '■'
 renderPiece (Wall (Just n)) = intToDigit $ fromEnum n
 renderPiece Free            = '□'
 renderPiece Light           = '○'
+
+adjacentCells
+  :: Configuration -> Position -> [Position]
+adjacentCells = stencilCells [Pos (-1) 0, Pos 1 0, Pos 0 (-1), Pos 0 1]
+
+diagonalCells
+  :: Configuration -> Position -> [Position]
+diagonalCells =
+  stencilCells [Pos (-1) (-1), Pos 1 (-1), Pos (-1) 1, Pos 1 1]
+
+stencilCells :: [Position] -> Configuration -> Position -> [Position]
+stencilCells windows cfg pos =
+  [ p
+  | d <- windows
+  , let p = pos + d
+  , inBoard cfg p && isNothing (getPlacement p cfg)
+  ]
+
+
+data Dir = Vert | Horiz
+  deriving (Read, Show, Eq, Ord)
+
+dirOffset :: Dir -> Position
+dirOffset Vert  = Pos 0 1
+dirOffset Horiz = Pos 1 0
+
+dualDir :: Dir -> Dir
+dualDir Vert  = Horiz
+dualDir Horiz = Vert
+
+walk :: Dir -> Position -> Position
+walk  = (+) . dirOffset
+
+classifySegments
+  :: Configuration -> V.Vector (V.Vector (HS.HashSet Position))
+classifySegments cfg =
+   V.zipWith (V.zipWith HS.union) (go Vert) (go Horiz)
+  where
+    go dir = runST $ do
+      bds <- generateBoardM cfg $ \pos ->
+          fresh $
+            if isNothing (getPlacement pos cfg)
+            then HS.singleton pos
+            else HS.empty
+      let step pos@Pos{..} = do
+            let along  = guardRange cfg $ walk dir pos
+                pt = bds ! pos
+            forM_ along $ \pos' -> do
+              when (isNothing $ getPlacement pos cfg
+                            <|> getPlacement pos' cfg
+                    ) $
+                  union' pt (bds ! pos') (fmap return . (<>))
+              step pos'
+      forM_ [0 .. maxDirSize cfg (dualDir dir) - 1] $ \i ->
+        step $ fromIntegral i * dirOffset (dualDir dir)
+      mapM (mapM descriptor) bds
+
+maxDirSize :: Configuration -> Dir -> Int
+maxDirSize Config{..} Vert  = boardHeight
+maxDirSize Config{..} Horiz = boardWidth
+
+guardRange
+  :: Configuration
+  -> Position
+  -> Maybe Position
+guardRange cfg pos
+  | inBoard cfg pos = Just pos
+  | otherwise = Nothing

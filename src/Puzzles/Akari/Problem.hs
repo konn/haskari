@@ -1,20 +1,18 @@
 {-# LANGUAGE MultiParamTypeClasses, RecordWildCards #-}
 module Puzzles.Akari.Problem where
-import           Control.Applicative
 import           Control.Arrow
 import           Control.Lens
 import           Control.Monad
-import           Control.Monad.ST
 import           Control.Monad.State.Class
+import qualified Data.HashMap.Strict       as HM
 import qualified Data.HashSet              as HS
 import           Data.List                 hiding (all, and, any)
 import           Data.Maybe
-import           Data.UnionFind.ST
-import qualified Data.Vector               as V
 import           Ersatz
 import           Prelude                   hiding (all, and, any, (&&), (||))
 
-import Puzzles.Akari.Orphans ()
+import Puzzles.Akari.Heuristics
+import Puzzles.Akari.Orphans    ()
 import Puzzles.Akari.Types
 
 problem
@@ -25,48 +23,6 @@ problem cfg = do
   lightInvariant cfg board
   wallInvariant cfg board
   return board
-
-data Dir = Vert | Horiz
-  deriving (Read, Show, Eq, Ord)
-
-dirOffset :: Dir -> Position
-dirOffset Vert  = Pos 0 1
-dirOffset Horiz = Pos 1 0
-
-dualDir :: Dir -> Dir
-dualDir Vert  = Horiz
-dualDir Horiz = Vert
-
-walk :: Dir -> Position -> Position
-walk  = (+) . dirOffset
-
-classifySegments
-  :: Configuration -> V.Vector (V.Vector (HS.HashSet Position))
-classifySegments cfg =
-   V.zipWith (V.zipWith HS.union) (go Vert) (go Horiz)
-  where
-    go dir = runST $ do
-      bds <- generateBoardM cfg $ \pos ->
-          fresh $
-            if isNothing (getPlacement pos cfg)
-            then HS.singleton pos
-            else HS.empty
-      let step pos@Pos{..} = do
-            let along  = guardRange cfg $ walk dir pos
-                pt = bds ! pos
-            forM_ along $ \pos' -> do
-              when (isNothing $ getPlacement pos cfg
-                            <|> getPlacement pos' cfg
-                    ) $
-                  union' pt (bds ! pos') (fmap return . (<>))
-              step pos'
-      forM_ [0 .. maxDirSize cfg (dualDir dir) - 1] $ \i ->
-        step $ fromIntegral i * dirOffset (dualDir dir)
-      mapM (mapM descriptor) bds
-
-maxDirSize :: Configuration -> Dir -> Int
-maxDirSize Config{..} Vert  = boardHeight
-maxDirSize Config{..} Horiz = boardWidth
 
 wallInvariant
   :: (MonadState s m, HasSAT s)
@@ -103,26 +59,11 @@ initialiseBoard
   :: (MonadState s m, HasSAT s)
   => Configuration -> m Board
 initialiseBoard cfg = do
-  bd <- generateBoardM cfg (const exists)
-  forBoardM_ bd $ \pos p -> assert $
-    maybe (p === free || p === light)
-      ((p ===) . fromRaw)
-      $ getPlacement pos cfg
-  return bd
-
-adjacentCells
-  :: Configuration -> Position -> [Position]
-adjacentCells cfg pos =
-  [ p
-  | d <- [Pos (-1) 0, Pos 1 0, Pos 0 (-1), Pos 0 1]
-  , let p = pos + d
-  , inBoard cfg p && isNothing (getPlacement p cfg)
-  ]
-
-guardRange
-  :: Configuration
-  -> Position
-  -> Maybe Position
-guardRange cfg pos
-  | inBoard cfg pos = Just pos
-  | otherwise = Nothing
+  let partial = applyHeuristics defaultHeuristics cfg
+  generateBoardM cfg $ \pos ->
+    case HM.lookup pos partial of
+      Just w -> pure $ fromRaw w
+      Nothing -> do
+        v <- exists
+        assert $ v === free || v === light
+        pure v

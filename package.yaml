@@ -26,11 +26,18 @@ dependencies:
 - vector
 - transformers
 - mtl
+- foldl
+- transformers
+- mtl
 - lens
 - unordered-containers
 - union-find
 - hashable
 - profunctors
+
+ghc-options:
+- -Wall
+
 
 library:
   source-dirs: src
@@ -43,7 +50,6 @@ executables:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
-    - -Wall
     dependencies:
     - haskari
 
