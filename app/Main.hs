@@ -29,9 +29,9 @@ main = do
   (res, msol) <- solveWith cryptominisat5 (problem example)
   when (res /= Satisfied) (fail (show res))
   case msol of
-    []  -> fail ("sol was " ++ show msol)
+    []  -> fail ("No solution found: " ++ show msol)
     sols -> do
-      putStrLn $ show (length sols) ++ " answer(s) found: "
+      putStrLn $ show (length sols) ++ " solution(s) found: "
       iforM_ sols $ \i sol -> do
         let lab = '#' : show i
         putStrLn $ lab ++ ' ' : replicate (boardWidth example - length lab) '-'
