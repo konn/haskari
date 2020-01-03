@@ -1,8 +1,9 @@
-{-# LANGUAGE DeriveAnyClass, DeriveDataTypeable, DeriveGeneric    #-}
-{-# LANGUAGE DerivingStrategies, PatternSynonyms, RecordWildCards #-}
-{-# LANGUAGE TypeFamilies                                         #-}
+{-# LANGUAGE DeriveAnyClass, DeriveDataTypeable, DeriveGeneric            #-}
+{-# LANGUAGE DeriveTraversable, DerivingStrategies, MultiParamTypeClasses #-}
+{-# LANGUAGE PatternSynonyms, RecordWildCards, TypeFamilies               #-}
 module Puzzles.Akari.Types where
 import           Control.Applicative
+import           Control.Lens
 import           Control.Monad
 import           Control.Monad.ST
 import           Data.Char
@@ -11,7 +12,6 @@ import           Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet        as HS
 import           Data.Maybe
-import           Data.Profunctor
 import           Data.UnionFind.ST
 import           Data.Vector         (Vector)
 import qualified Data.Vector         as V
@@ -215,3 +215,15 @@ guardRange
 guardRange cfg pos
   | inBoard cfg pos = Just pos
   | otherwise = Nothing
+
+newtype Grid a = Grid { runGrid :: Vector (Vector a) }
+  deriving (Functor, Foldable, Traversable, Generic)
+instance Wrapped (Grid a)
+
+instance FoldableWithIndex Position Grid where
+  ifoldMap f =
+    ifoldMap (\posY -> ifoldMap $ \posX -> f Pos{..}) . runGrid
+  {-# INLINE ifoldMap #-}
+
+boardSize :: Configuration -> Int
+boardSize Config{..} = boardHeight * boardWidth

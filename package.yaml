@@ -26,6 +26,9 @@ dependencies:
 - vector
 - transformers
 - foldl-extras
+- bytestring
+- text
+- mono-traversable
 - mtl
 - foldl
 - transformers

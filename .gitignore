@@ -38,3 +38,4 @@ cabal.project.local~
 
 
 stack.yaml.lock
+data/q*.txt

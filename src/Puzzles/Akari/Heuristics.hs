@@ -5,7 +5,6 @@ import           Control.Foldl.Extra.Vector
 import           Control.Lens
 import           Control.Monad
 import           Data.Char
-import           Data.Either
 import           Data.Foldable
 import qualified Data.HashMap.Strict        as HM
 import qualified Data.HashSet               as HS
@@ -93,21 +92,15 @@ triviallyFree cfg partial =
 --   then it must be a light.
 onlySlot :: Heuristics
 onlySlot cfg partial =
-  let segs = L.fold (L.handles L.folded L.set) $ classifySegments cfg
-  in L.fold
+  let segs = classifySegments cfg
+  in L.foldOver (_Unwrapping' Grid. ifolded.withIndex)
       (lmap
-          (\pts -> do
-            let (justs, nothings)= partitionEithers
-                  $ map
-                      (\pos ->
-                        maybe (Right pos)
-                          Left
-                          $ HM.lookup pos partial
-                      )
-                  $ HS.toList pts
-            [v] <- pure nothings
-            guard $ all (== Free) justs
-            pure (v, Light)
+          (\(cur, adjs0) -> do
+            let adjs = HS.delete cur adjs0
+            guard $
+              isNothing (HM.lookup cur partial)
+              && all (\pos -> maybe False (/= Light) $ HM.lookup pos partial) adjs
+            return (cur, Light)
           )
       $ L.handles _Just
         L.hashMap
