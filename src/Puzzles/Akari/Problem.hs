@@ -108,8 +108,6 @@ initialiseBoard cfg = do
     maybe (p === free || p === light)
       ((p ===) . fromRaw)
       $ getPlacement pos cfg
-  iforM_ (walls cfg) $ \pos p ->
-    assert $ bd ! pos === fromRaw p
   return bd
 
 adjacentCells
