@@ -26,13 +26,21 @@ main :: IO ()
 main = do
   putStrLn "Solving: "
   putStrLn $ render $ initialBoard example
-  (res, msol) <- solveWith cryptominisat5 (problem example)
-  when (res /= Satisfied) (fail (show res))
-  case msol of
-    []  -> fail ("No solution found: " ++ show msol)
-    sols -> do
-      putStrLn $ show (length sols) ++ " solution(s) found: "
-      iforM_ sols $ \i sol -> do
-        let lab = '#' : show i
-        putStrLn $ lab ++ ' ' : replicate (boardWidth example - length lab) '-'
-        putStrLn $ render sol
+  putStrLn "After applying heuristics:"
+  let partial = applyHeuristics defaultHeuristics example
+  putStrLn $ renderPartial example  partial
+  (res, msol) <- solveWith cryptominisat5 (problemWith partial example)
+  if HM.size partial == boardWidth example * boardHeight example
+    then if res == Unsatisfied
+         then error $ "Solution given by heuristics is wrong!\n\t" ++ show msol
+         else putStrLn "We successfuly solved the puzzle only with heuristics!"
+    else do
+      when (res /= Satisfied) (fail (show res))
+      case msol of
+        []  -> fail ("No solution found: " ++ show msol)
+        sols -> do
+          putStrLn $ show (length sols) ++ " solution(s) found: "
+          iforM_ sols $ \i sol -> do
+            let lab = '#' : show i
+            putStrLn $ lab ++ ' ' : replicate (boardWidth example - length lab) '-'
+            putStrLn $ render sol

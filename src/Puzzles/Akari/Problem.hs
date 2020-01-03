@@ -15,11 +15,14 @@ import Puzzles.Akari.Heuristics
 import Puzzles.Akari.Orphans    ()
 import Puzzles.Akari.Types
 
-problem
+problem :: (MonadState s m, HasSAT s) => Configuration -> m Board
+problem = problemWith <$> initialSolution <*> id
+
+problemWith
   :: (MonadState s m, HasSAT s)
-  => Configuration -> m Board
-problem cfg = do
-  board <- initialiseBoard cfg
+  => PartialSolution -> Configuration -> m Board
+problemWith partial cfg = do
+  board <- initialiseBoardWith partial cfg
   lightInvariant cfg board
   wallInvariant cfg board
   return board
@@ -54,11 +57,10 @@ lightInvariant cfg board =
           ||    board ! pos === free
              && any (=== light) conns
 
-initialiseBoard
+initialiseBoardWith
   :: (MonadState s m, HasSAT s)
-  => Configuration -> m Board
-initialiseBoard cfg = do
-  let partial = applyHeuristics defaultHeuristics cfg
+  => PartialSolution -> Configuration -> m Board
+initialiseBoardWith partial cfg =
   generateBoardM cfg $ \pos ->
     case HM.lookup pos partial of
       Just w -> pure $ fromRaw w

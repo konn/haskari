@@ -25,6 +25,7 @@ dependencies:
 - containers
 - vector
 - transformers
+- foldl-extras
 - mtl
 - foldl
 - transformers

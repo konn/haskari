@@ -1,11 +1,17 @@
 {-# LANGUAGE BangPatterns, LambdaCase, RecordWildCards, TupleSections #-}
 module Puzzles.Akari.Heuristics where
-import qualified Control.Foldl       as L
+import qualified Control.Foldl              as L
+import           Control.Foldl.Extra.Vector
+import           Control.Lens
 import           Control.Monad
+import           Data.Char
+import           Data.Either
 import           Data.Foldable
-import qualified Data.HashMap.Strict as HM
-import qualified Data.HashSet        as HS
-import           Data.Profunctor
+import qualified Data.HashMap.Strict        as HM
+import qualified Data.HashSet               as HS
+import           Data.Maybe
+import qualified Data.Vector                as V
+import qualified Data.Vector.Mutable        as MV
 import           Prelude
 import           Puzzles.Akari.Types
 
@@ -17,8 +23,9 @@ type PartialSolution = HM.HashMap Position RawPiece
 type Heuristics = Configuration -> PartialSolution -> PartialSolution
 
 defaultHeuristics :: [Heuristics]
-defaultHeuristics = [triviallyFree, maximal, pigeonhole3]
+defaultHeuristics = [triviallyFree, maximal, onlySlot, pigeonhole3]
 
+-- | Applies heuristics successively until fixed-point.
 applyHeuristics
   :: [Heuristics]
   -> Configuration
@@ -37,6 +44,17 @@ initialSolution
   :: Configuration -> PartialSolution
 initialSolution Config{..} = Wall <$> walls
 
+{- | Wall 3 must have free diagonally adjacent cells.
+
+  @
+      3
+
+  ->
+    + +
+     3
+    + +
+  @
+-}
 pigeonhole3 :: Heuristics
 pigeonhole3 cfg =
   L.fold
@@ -48,18 +66,56 @@ pigeonhole3 cfg =
         _ -> Nothing
     )
 
+-- | Marks all cells as free, which is
+--
+--     * Lit by a light, or
+--     * Adjacent empty cells, which already has
+--       maximal number of adjacent lights.
 triviallyFree :: Heuristics
-triviallyFree cfg =
+triviallyFree cfg partial =
   let segs = classifySegments cfg
   in L.fold
       (L.handles L.folded $ lmap (,Free) L.hashMap)
-    . HM.mapMaybeWithKey
-    (\pos -> \case
-      Light ->
-        Just $ HS.delete pos (segs ! pos)
-      _ -> Nothing
-    )
+    $ HM.mapMaybeWithKey
+      (\pos -> \case
+        Light ->
+          Just $ HS.delete pos (segs ! pos)
+        Wall (Just n) -> do
+          let (_, lits, indets) = adjsLightsIndets cfg pos partial
+          guard $ length lits == fromIntegral n
+          return $ HS.fromList indets
+        _ -> Nothing
+      )
+    partial
 
+-- | If the cell is only indeterminate cell
+--      and other cells in segments are free,
+--   then it must be a light.
+onlySlot :: Heuristics
+onlySlot cfg partial =
+  let segs = L.fold (L.handles L.folded L.set) $ classifySegments cfg
+  in L.fold
+      (lmap
+          (\pts -> do
+            let (justs, nothings)= partitionEithers
+                  $ map
+                      (\pos ->
+                        maybe (Right pos)
+                          Left
+                          $ HM.lookup pos partial
+                      )
+                  $ HS.toList pts
+            [v] <- pure nothings
+            guard $ all (== Free) justs
+            pure (v, Light)
+          )
+      $ L.handles _Just
+        L.hashMap
+      )
+     segs
+
+-- | If there are exactly the same number of indeterminate cells
+--   around a wall as remaining lights, marm them all as a light.
 maximal :: Heuristics
 maximal cfg partial =
   L.fold
@@ -68,14 +124,23 @@ maximal cfg partial =
       (\pos ans ->
         case ans of
           Wall mn -> mn >>= \n -> do
-            let adjs = adjacentCells cfg pos
-                lits = filter ((== Just Light) . (`HM.lookup` partial)) adjs
-                indets = indeterminates partial adjs
+            let (_, lits, indets) = adjsLightsIndets cfg pos partial
             guard $ length lits + length indets == fromIntegral n
-            pure adjs
+            pure indets
           _ -> Nothing
       )
   partial
+
+adjsLightsIndets
+  :: Configuration
+  -> Position
+  -> PartialSolution
+  -> ([Position], [Position], [Position])
+adjsLightsIndets cfg pos partial =
+  let adjs = adjacentCells cfg pos
+      lits = filter ((== Just Light) . (`HM.lookup` partial)) adjs
+      indets = indeterminates partial adjs
+  in (adjs, lits, indets)
 
 indeterminates
   :: Foldable t
@@ -83,6 +148,36 @@ indeterminates
   -> t Position
   -> [Position]
 indeterminates psol =
-  filter (not . (`HM.member` psol))
-  . toList
+  filter (not . (`HM.member` psol)) . toList
 
+{- | Two adjacent 2-blocks
+
+@
+      22
+ ->
+    -+  +-
+    -o22o-
+    -+  +-
+@
+
+TODO: implement this correctly
+-}
+twoTwo :: Heuristics
+twoTwo = mempty
+
+renderPartial :: Configuration -> PartialSolution -> String
+renderPartial cfg partial =
+  unlines $ V.toList $ V.map V.toList
+  $ L.foldOver (ifolded.withIndex)
+      (lmap (\(Pos{..}, a) -> (posY, (posX, a)))
+      $ accumWith
+          (flip $ \(i, c) ->
+            V.modify (\mv -> MV.unsafeWrite mv i (renderPiece' c))
+          )
+        $ V.map (V.map renderPiece) (initialBoard cfg)
+      )
+    partial
+
+renderPiece' :: RawPiece -> Char
+renderPiece' Free = '.'
+renderPiece' p    = renderPiece p
