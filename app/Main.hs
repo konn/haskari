@@ -63,6 +63,6 @@ main = do
         sols -> do
           putStrLn $ show (length sols) ++ " solution(s) found by SAT: "
           iforM_ sols $ \i sol -> do
-            let lab = '#' : show i
+            let lab = '#' : show (i+1)
             putStrLn $ lab ++ ' ' : replicate (boardWidth input - length lab) '-'
             putStrLn $ render sol
