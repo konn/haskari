@@ -23,7 +23,8 @@ type PartialSolution = HM.HashMap Position RawPiece
 type Heuristics = Configuration -> PartialSolution -> PartialSolution
 
 defaultHeuristics :: [Heuristics]
-defaultHeuristics = [triviallyFree, maximal, onlySlot, pigeonhole3, pigeonhole]
+defaultHeuristics =
+  [triviallyFree, maximal, onlySlot, pigeonhole3, pigeonhole]
 
 -- | Applies heuristics successively until fixed-point.
 applyHeuristics
@@ -110,26 +111,24 @@ triviallyFree cfg partial =
       )
     partial
 
--- | If the cell is only indeterminate cell
---      and other cells in segments are free,
+-- | If there is only one indeterminate cell in the segment,
 --   then it must be a light.
 onlySlot :: Heuristics
 onlySlot cfg partial =
   let segs = classifySegments cfg
-  in L.foldOver (_Unwrapping' Grid. ifolded.withIndex)
+  in L.fold
       (lmap
-          (\(cur, adjs0) -> do
-            let adjs = HS.delete cur adjs0
-            guard $ isNothing (HM.lookup cur partial)
-                && all (  (== Just Free)
-                       . flip HM.lookup  partial
-                       )
-                      adjs
-            return (cur, Light)
+          (\adjs -> do
+            ([v], ps) <-
+              pure $ List.partition (isNothing . flip HM.lookup partial)
+                   $ HS.toList adjs
+            guard $ all ((== Just Free).flip HM.lookup partial) ps
+            return (v, Light)
           )
       $ L.handles _Just L.hashMap
       )
-     segs
+     $ Grid segs
+
 
 -- | If there are exactly the same number of indeterminate cells
 --   around a wall as remaining lights, marm them all as a light.
