@@ -1,5 +1,5 @@
-{-# LANGUAGE BangPatterns, DeriveGeneric, RecordWildCards, TupleSections #-}
-{-# LANGUAGE ViewPatterns                                                #-}
+{-# LANGUAGE BangPatterns, DeriveGeneric, LambdaCase, NamedFieldPuns #-}
+{-# LANGUAGE RecordWildCards, TupleSections, ViewPatterns            #-}
 module Puzzles.Akari.Heuristics where
 import           Control.Arrow              ((&&&))
 import qualified Control.Foldl              as L
@@ -34,15 +34,16 @@ applyHeuristics
   -> Configuration
   -> PartialSolution
 applyHeuristics hs cnf =
-  go $ initialSolution cnf
+  let sol = initialSolution cnf
+  in go (buildHint cnf sol) sol
   where
     !heuri = mconcat hs cnf
-    go (!acc) =
-      let hint = buildHint cnf acc
+    go (!hint0) (!acc) =
+      let hint = updateHint cnf acc hint0
           new = heuri hint acc
       in if HM.null $ new `HM.difference` acc
       then acc
-      else go (acc `HM.union` new)
+      else go hint (acc `HM.union` new)
 
 initialSolution
   :: Configuration -> PartialSolution
@@ -65,8 +66,11 @@ pigeonhole3 Config{..} Hint{..} _ =
     (lmap
       (\(pos, mn) -> do
         3 <- mn
-        let conn = runGrid connection ! pos
-        return $ diagonals conn
+        let conn = connection ! pos
+        return $ HM.keys
+               $ HM.filter
+                  (\case { Just Wall{} -> False; _ -> True})
+               $ diagonals conn
       )
     $ L.handles (_Just.folded)
     $ lmap (,Free) L.hashMap
@@ -80,12 +84,15 @@ pigeonhole _ Hint{..} = const $
   L.foldOver (ifolded.withIndex)
     ( lmap
         (\(pos, SlotInfo{..}) -> do
-          let conn = runGrid connection ! pos
-              diags =
-                HS.filter
-                  ( (== 2) . HS.size
-                  . HS.intersection openSlots
-                  . adjacents . (runGrid connection !)
+          let conn = connection ! pos
+              diags = HM.keysSet
+                $ HM.filterWithKey
+                  (\pos' cell ->
+                    let adjs = HM.keysSet
+                              $ adjacents
+                              $ connection ! pos'
+                    in HS.size (openSlots `HS.intersection` adjs) == 2
+                      && maybe True (not . isWall) cell
                   )
                 $ diagonals conn
           guard $ HS.size openSlots == remainingLights + 1
@@ -107,7 +114,7 @@ triviallyFree _ Hint{..} =
     (lmap
       (\(pos, shape) -> case shape of
         Light ->
-          Just $ HS.delete pos (runGrid segments ! pos)
+          Just $ HS.delete pos (segments ! pos)
         Wall Just {} -> do
           let SlotInfo{..} = slotInfo HM.! pos
           guard $ remainingLights == 0
@@ -173,7 +180,7 @@ renderPartial cfg partial =
           (flip $ \(i, c) ->
             V.modify (\mv -> MV.unsafeWrite mv i (renderPiece' c))
           )
-        $ V.map (V.map renderPiece) (initialBoard cfg)
+        $ V.map (V.map renderPiece) (runGrid $ initialBoard cfg)
       )
     partial
 
@@ -188,37 +195,47 @@ data SlotInfo =
   deriving (Show, Eq, Ord, Generic)
 
 data CellConnection =
-  CellConn { adjacents :: !(HS.HashSet Position)
-           , diagonals :: !(HS.HashSet Position)
+  CellConn { adjacents :: !(HM.HashMap Position (Maybe RawPiece))
+           , diagonals :: !(HM.HashMap Position (Maybe RawPiece))
            }
   deriving (Show, Eq, Ord, Generic)
 
 data Hint =
-  Hint { slotInfo   :: HM.HashMap Position SlotInfo
-       , connection :: Grid CellConnection
-       , segments   :: Grid (HS.HashSet Position)
+  Hint { slotInfo       :: HM.HashMap Position SlotInfo
+       , connection     :: Grid CellConnection
+       , segments       :: Grid (HS.HashSet Position)
+       , indeterminates :: HS.HashSet Position
+       , allCells       :: HS.HashSet Position
        }
   deriving (Show, Eq, Ord, Generic)
 
-buildHint
+updateHint
   :: Configuration -> PartialSolution
-  -> Hint
-buildHint cfg@Config{..} partial = Hint{..}
+  -> Hint -> Hint
+updateHint cfg@Config{..} partial
+  Hint{indeterminates = indets0, segments, allCells}
+  = Hint{..}
   where
-    !segments = Grid $ classifySegments cfg
+    !indeterminates =
+      indets0 `HS.difference` HM.keysSet partial
     !connection =
-      Grid
-      $ generateBoard cfg $ \pos ->
+      generateGrid cfg $ \pos ->
          CellConn
-            { adjacents = HS.fromList $ adjacentCells cfg pos
-            , diagonals = HS.fromList $ diagonalCells cfg pos
+            { adjacents = HM.fromList
+                $ map (id &&& flip HM.lookup partial)
+                $ adjacentCellsWith (const True) cfg pos
+            , diagonals = HM.fromList
+                $ map (id &&& flip HM.lookup partial)
+                $ diagonalCellsWith (const True) cfg pos
             }
 
     !slotInfo =
       HM.mapMaybeWithKey
         (\pos mn -> mn >>= \(fromIntegral -> n) -> do
-            let adjs = adjacents
-                     $ runGrid connection ! pos
+            let adjs = HM.keysSet
+                     $ HM.filter (maybe True (not . isWall))
+                     $ adjacents
+                     $ connection ! pos
                 (openSlots, litCount) =
                   L.fold
                     ( lmap (id &&& (`HM.lookup` partial))
@@ -232,3 +249,20 @@ buildHint cfg@Config{..} partial = Hint{..}
             return SlotInfo{..}
         )
       walls
+
+buildHint
+  :: Configuration -> PartialSolution
+  -> Hint
+buildHint cfg@Config{..} partial = updateHint cfg partial Hint{..}
+  where
+    !allCells =
+      HS.fromList
+        [ Pos x y
+        | x <- [0..boardWidth - 1]
+        , y <- [0..boardHeight - 1]
+        ]
+      `HS.difference` HM.keysSet walls
+    !indeterminates = allCells
+    !segments = classifySegments cfg
+    connection = Grid V.empty
+    slotInfo = mempty

@@ -9,7 +9,6 @@ import qualified Data.HashMap.Strict       as HM
 import qualified Data.HashSet              as HS
 import           Data.List                 hiding (all, and, any)
 import           Data.Maybe
-import           Data.Vector               (Vector)
 import           Ersatz
 import           Prelude                   hiding (all, and, any, not, (&&),
                                             (||))
@@ -33,7 +32,7 @@ problemWith partial cfg = do
 
 wallInvariant
   :: (PieceLike piece, EquatableIn b piece)
-  => Configuration -> Vector (Vector piece) -> [b]
+  => Configuration -> Grid piece -> [b]
 wallInvariant cfg@Config{..} board =
   L.foldOver (ifolded.withIndex)
     (lmap
@@ -55,9 +54,9 @@ combN n (x : xs) =
   ++ map (second (x :)) (combN n xs)
 
 lightInvariant :: (PieceLike piece, EquatableIn b piece)
-  => Configuration -> Vector (Vector piece) -> [b]
+  => Configuration -> Grid piece -> [b]
 lightInvariant cfg board =
-  L.foldOver (_Unwrapping' Grid . ifolded . withIndex)
+  L.foldOver (ifolded . withIndex)
     (lmap
       (\(pos, pts0) -> do
         guard (isNothing $ getPlacement pos cfg)
@@ -75,7 +74,7 @@ validSolution
   -> PartialSolution
   -> Bool
 validSolution cfg sols =
-  let bd = generateBoard cfg (sols HM.!)
+  let bd = generateGrid cfg (sols HM.!)
   in boardSize cfg == HM.size sols
     && and (lightInvariant cfg bd)
     && and (wallInvariant cfg bd)
@@ -84,11 +83,11 @@ validSolution cfg sols =
 nonWallInvariant
   :: (PieceLike piece, EquatableIn b piece)
   => Configuration
-  -> Vector (Vector piece)
+  -> Grid piece
   -> [b]
 nonWallInvariant cfg =
   L.foldOver
-    (_Unwrapping' Grid . ifolded . withIndex)
+    (ifolded . withIndex)
     (lmap
       (\(pos, piece) ->
         maybe
@@ -103,7 +102,7 @@ initialiseBoardWith
   :: (MonadState s m, HasSAT s)
   => PartialSolution -> Configuration -> m Board
 initialiseBoardWith partial cfg =
-  generateBoardM cfg $ \pos ->
+  generateGridM cfg $ \pos ->
     case HM.lookup pos partial of
       Just w -> pure $ fromRawPiece w
       Nothing -> do

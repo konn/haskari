@@ -8,6 +8,7 @@ import           Control.Lens
 import           Control.Monad
 import           Control.Monad.ST
 import           Data.Char
+import           Data.Function
 import           Data.Hashable
 import           Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
@@ -37,24 +38,24 @@ fromRawWall = wall
 
 type Walls = HashMap Position WallSpec
 
-(!) :: Vector (Vector a) -> Position -> a
-(!) b (Pos x y) = b V.! y V.! x
+(!) :: Grid a -> Position -> a
+Grid b ! (Pos x y) = b V.! y V.! x
 
-(!?) :: Vector (Vector a) -> Position -> Maybe a
-b !? Pos x y = (b V.!? y) >>= (V.!? x)
+(!?) :: Grid a -> Position -> Maybe a
+Grid b !? Pos x y = (b V.!? y) >>= (V.!? x)
 
-generateBoard
-  :: Configuration -> (Position -> a) -> Vector (Vector a)
-generateBoard Config{..} act =
-  V.generate boardHeight $ \posY ->
+generateGrid
+  :: Configuration -> (Position -> a) -> Grid a
+generateGrid Config{..} act =
+  Grid $ V.generate boardHeight $ \posY ->
     V.generate boardWidth $ \posX ->
       act Pos{..}
 
-generateBoardM
+generateGridM
   :: Monad m
-  => Configuration -> (Position -> m a) -> m (Vector (Vector a))
-generateBoardM Config{..} act =
-  V.generateM boardHeight $ \posY ->
+  => Configuration -> (Position -> m a) -> m (Grid a)
+generateGridM Config{..} act =
+  fmap Grid $ V.generateM boardHeight $ \posY ->
     V.generateM boardWidth $ \posX ->
       act Pos{..}
 
@@ -72,8 +73,8 @@ light, free :: PieceLike p => p
 light = fromRawPiece Light
 free  = fromRawPiece Free
 
-type Board = Vector (Vector Piece)
-type RawBoard = Vector (Vector RawPiece)
+type Board = Grid Piece
+type RawBoard = Grid RawPiece
 
 instance Codec Piece where
   type Decoded Piece = RawPiece
@@ -127,12 +128,12 @@ forBoard :: Vector (Vector a) -> (Position -> a -> b) -> Vector (Vector b)
 forBoard bd act = V.imap (\posY -> V.imap $ \posX -> act Pos{..}) bd
 
 initialBoard :: Configuration -> RawBoard
-initialBoard cnf = generateBoard cnf $ \pos ->
+initialBoard cnf = generateGrid cnf $ \pos ->
   maybe Free Wall $ getPlacement pos cnf
 
 render
   :: RawBoard -> String
-render = unlines . V.toList . V.map (foldMap renderPiece)
+render = unlines . V.toList . V.map (foldMap renderPiece) . runGrid
 
 renderPiece :: RawPiece -> String
 renderPiece (Wall mn)  =
@@ -140,21 +141,32 @@ renderPiece (Wall mn)  =
 renderPiece Free            = "_"
 renderPiece Light           = "o"
 
-adjacentCells
-  :: Configuration -> Position -> [Position]
-adjacentCells = stencilCells [Pos (-1) 0, Pos 1 0, Pos 0 (-1), Pos 0 1]
+adjacentCells :: Configuration -> Position -> [Position]
+adjacentCells = adjacentCellsWith isNothing
 
-diagonalCells
-  :: Configuration -> Position -> [Position]
-diagonalCells =
+adjacentCellsWith
+  :: (Maybe WallSpec -> Bool)
+  -> Configuration -> Position -> [Position]
+adjacentCellsWith = stencilCells [Pos (-1) 0, Pos 1 0, Pos 0 (-1), Pos 0 1]
+
+diagonalCells :: Configuration -> Position -> [Position]
+diagonalCells = diagonalCellsWith isNothing
+
+diagonalCellsWith
+  :: (Maybe WallSpec -> Bool)
+  -> Configuration -> Position -> [Position]
+diagonalCellsWith =
   stencilCells [Pos (-1) (-1), Pos 1 (-1), Pos (-1) 1, Pos 1 1]
 
-stencilCells :: [Position] -> Configuration -> Position -> [Position]
-stencilCells windows cfg pos =
+stencilCells
+  :: [Position]
+  -> (Maybe WallSpec -> Bool)
+  -> Configuration -> Position -> [Position]
+stencilCells windows q cfg pos =
   [ p
   | d <- windows
   , let p = pos + d
-  , inBoard cfg p && isNothing (getPlacement p cfg)
+  , inBoard cfg p && q (getPlacement p cfg)
   ]
 
 
@@ -173,12 +185,12 @@ walk :: Dir -> Position -> Position
 walk  = (+) . dirOffset
 
 classifySegments
-  :: Configuration -> V.Vector (V.Vector (HS.HashSet Position))
+  :: Configuration -> Grid (HS.HashSet Position)
 classifySegments cfg =
-   V.zipWith (V.zipWith HS.union) (go Vert) (go Horiz)
+   Grid $ V.zipWith (V.zipWith HS.union) (go Vert) (go Horiz)
   where
     go dir = runST $ do
-      bds <- generateBoardM cfg $ \pos ->
+      bds <- generateGridM cfg $ \pos ->
           fresh $
             if isNothing (getPlacement pos cfg)
             then HS.singleton pos
@@ -194,7 +206,7 @@ classifySegments cfg =
               step pos'
       forM_ [0 .. maxDirSize cfg (dualDir dir) - 1] $ \i ->
         step $ fromIntegral i * dirOffset (dualDir dir)
-      mapM (mapM descriptor) bds
+      runGrid <$> mapM descriptor bds
 
 maxDirSize :: Configuration -> Dir -> Int
 maxDirSize Config{..} Vert  = boardHeight
@@ -244,3 +256,18 @@ instance PieceLike Piece where
   fromRawPiece (Wall Nothing)  = Piece $ encode 5
   fromRawPiece Light           = Piece $ encode 6
   fromRawPiece Free            = Piece $ encode 7
+
+isWall :: RawPiece -> Bool
+isWall Wall{} = True
+isWall _      = False
+
+instance Codec a => Codec (Grid a) where
+  type Decoded (Grid a) = Grid (Decoded a)
+  decode s = mapM (decode s)
+  encode = fmap encode
+
+instance Equatable a => Equatable (Grid a) where
+  (===) = (===) `on` runGrid
+  {-# INLINE (===) #-}
+  (/==) = (/==) `on` runGrid
+  {-# INLINE (/==) #-}
