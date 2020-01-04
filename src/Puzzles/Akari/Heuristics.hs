@@ -1,5 +1,5 @@
-{-# LANGUAGE BangPatterns, DeriveGeneric, LambdaCase, RecordWildCards #-}
-{-# LANGUAGE TupleSections, ViewPatterns                              #-}
+{-# LANGUAGE BangPatterns, DeriveGeneric, RecordWildCards, TupleSections #-}
+{-# LANGUAGE ViewPatterns                                                #-}
 module Puzzles.Akari.Heuristics where
 import           Control.Arrow              ((&&&))
 import qualified Control.Foldl              as L
@@ -102,21 +102,21 @@ pigeonhole _ Hint{..} = const $
 --     * Adjacent empty cells, which already has
 --       maximal number of adjacent lights.
 triviallyFree :: Heuristics
-triviallyFree cfg Hint{..} partial =
-  let segs = segments
-  in L.fold
-      (L.handles L.folded $ lmap (,Free) L.hashMap)
-    $ HM.mapMaybeWithKey
-      (\pos -> \case
+triviallyFree _ Hint{..} =
+  L.foldOver (ifolded.withIndex)
+    (lmap
+      (\(pos, shape) -> case shape of
         Light ->
-          Just $ HS.delete pos (runGrid segs ! pos)
-        Wall (Just n) -> do
-          let (_, lits, indets) = adjsLightsIndets cfg pos partial
-          guard $ length lits == fromIntegral n
-          return $ HS.fromList indets
+          Just $ HS.delete pos (runGrid segments ! pos)
+        Wall Just {} -> do
+          let SlotInfo{..} = slotInfo HM.! pos
+          guard $ remainingLights == 0
+          return openSlots
         _ -> Nothing
       )
-    partial
+    $ L.handles (_Just.folded)
+    $ lmap (,Free) L.hashMap
+    )
 
 -- | If there is only one indeterminate cell in the segment,
 --   then it must be a light.
@@ -148,25 +148,6 @@ maximal _ Hint{..} = const $
     $ L.handles (_Just . folded)
     $ lmap (,Light) L.hashMap)
     slotInfo
-
-adjsLightsIndets
-  :: Configuration
-  -> Position
-  -> PartialSolution
-  -> ([Position], [Position], [Position])
-adjsLightsIndets cfg pos partial =
-  let adjs = adjacentCells cfg pos
-      lits = filter ((== Just Light) . (`HM.lookup` partial)) adjs
-      indets = indeterminates partial adjs
-  in (adjs, lits, indets)
-
-indeterminates
-  :: Foldable t
-  => PartialSolution
-  -> t Position
-  -> [Position]
-indeterminates psol =
-  filter (not . (`HM.member` psol)) . toList
 
 {- | Two adjacent 2-blocks
 
