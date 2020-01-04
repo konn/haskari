@@ -31,6 +31,7 @@ defaultHeuristics =
   , onlySlot
   , pigeonhole
   , pigeonholeBacktrack
+  , pigeonholeBacktrackDual
   ]
 
 -- | Applies heuristics successively until fixed-point.
@@ -296,8 +297,48 @@ pigeonholeBacktrack _ Hint{..} = const $
       in any
           (\SlotInfo{..} ->
             remainingLights >
-              HS.size openSlots - HS.size (seg `HS.intersection` openSlots)
+              HS.size (openSlots `HS.difference` seg)
           ) adjWalls
     )
     indeterminates
+
+-- | 1-step backtracking with pigeonhole princple (dually).
+--
+--   If a numbered cell has 1 more empty slots
+--   than the number of remaining light(s),
+--   and if marking one of them as an empty makes
+--   other wall to be unsatisfiable,
+--   then it must be light
+pigeonholeBacktrackDual :: Heuristics
+pigeonholeBacktrackDual _ Hint{..} = const $
+  L.fold
+    ( L.handles folded
+    $ lmap (,Light) L.hashMap
+    )
+  $ HM.mapMaybeWithKey
+    (\pos SlotInfo{..} -> do
+      guard $ HS.size openSlots == remainingLights + 1
+      return $ HS.filter
+        (\open ->
+          let remain = HS.delete open openSlots
+              seg = foldMap (segments !) remain
+                      `HS.difference` remain
+              adjWalls =
+                foldMap
+                  ( HM.mapWithKey (const . (slotInfo HM.!))
+                  . HM.filter (maybe False $ \case { Wall Just{} -> True; _ -> False })
+                  . HM.filterWithKey (\p' _ -> p' /= pos)
+                  . adjacents
+                  . (connection !)
+                  )
+                  seg
+          in any
+              (\SlotInfo{..} ->
+                remainingLights > HS.size (openSlots `HS.difference` seg)
+                || HS.size (remain `HS.intersection` openSlots) > remainingLights
+              ) adjWalls
+        )
+        openSlots
+    )
+    slotInfo
 
