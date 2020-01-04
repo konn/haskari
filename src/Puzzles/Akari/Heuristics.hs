@@ -316,11 +316,11 @@ pigeonholeBacktrackDual _ Hint{..} = const $
     $ lmap (,Light) L.hashMap
     )
   $ HM.mapMaybeWithKey
-    (\pos SlotInfo{..} -> do
-      guard $ HS.size openSlots == remainingLights + 1
+    (\pos outer -> do
+      guard $ HS.size (openSlots outer) == remainingLights outer + 1
       return $ HS.filter
         (\open ->
-          let remain = HS.delete open openSlots
+          let remain = HS.delete open $ openSlots outer
               seg = foldMap (segments !) remain
                       `HS.difference` remain
               adjWalls =
@@ -338,7 +338,7 @@ pigeonholeBacktrackDual _ Hint{..} = const $
                 || HS.size (remain `HS.intersection` openSlots) > remainingLights
               ) adjWalls
         )
-        openSlots
+        $ openSlots outer
     )
     slotInfo
 
