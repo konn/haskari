@@ -1,6 +1,7 @@
-{-# LANGUAGE DeriveAnyClass, DeriveDataTypeable, DeriveGeneric            #-}
-{-# LANGUAGE DeriveTraversable, DerivingStrategies, MultiParamTypeClasses #-}
-{-# LANGUAGE PatternSynonyms, RecordWildCards, TypeFamilies               #-}
+{-# LANGUAGE DeriveAnyClass, DeriveDataTypeable, DeriveGeneric     #-}
+{-# LANGUAGE DeriveTraversable, DerivingVia, MultiParamTypeClasses #-}
+{-# LANGUAGE PatternSynonyms, RecordWildCards, StandaloneDeriving  #-}
+{-# LANGUAGE TypeFamilies                                          #-}
 module Puzzles.Akari.Types where
 import           Control.Applicative
 import           Control.Lens
@@ -20,6 +21,8 @@ import           Ersatz              hiding ((&&), (||))
 import           GHC.Generics
 import           Type.Reflection
 
+import Puzzles.Classes
+
 data Configuration =
   Config { boardHeight :: !Int
          , boardWidth  :: !Int
@@ -31,11 +34,6 @@ type WallSpec = Maybe Word8
 
 fromRawWall :: WallSpec -> Piece
 fromRawWall = wall
-
-fromRaw :: RawPiece -> Piece
-fromRaw (Wall w) = wall w
-fromRaw Light    = light
-fromRaw Free     = free
 
 type Walls = HashMap Position WallSpec
 
@@ -64,21 +62,15 @@ newtype Piece = Piece Bit3
   deriving (Show, Generic, Typeable)
   deriving anyclass (Variable, Boolean, Equatable)
 
-wall :: Maybe Word8 -> Piece
-wall (Just 0) = Piece $ encode 0
-wall (Just 1) = Piece $ encode 1
-wall (Just 2) = Piece $ encode 2
-wall (Just 3) = Piece $ encode 3
-wall (Just 4) = Piece $ encode 4
-wall (Just n) = error $ "Numbered wall must be of range 0-4, but got: " ++ show n
-wall Nothing  = Piece $ encode 5
+wall :: PieceLike p => WallSpec -> p
+wall = fromRawPiece . Wall
 
 data RawPiece = Wall (Maybe Word8) | Light | Free
   deriving (Read, Show, Eq, Ord)
 
-light, free :: Piece
-light = Piece $ encode 6
-free  = Piece $ encode 7
+light, free :: PieceLike p => p
+light = fromRawPiece Light
+free  = fromRawPiece Free
 
 type Board = Vector (Vector Piece)
 type RawBoard = Vector (Vector RawPiece)
@@ -145,7 +137,7 @@ render = unlines . V.toList . V.map (foldMap renderPiece)
 renderPiece :: RawPiece -> String
 renderPiece (Wall mn)  =
   "\x1b[7m" ++ maybe ' ' (intToDigit . fromEnum) mn : "\x1b[0m"
-renderPiece Free            = " "
+renderPiece Free            = "_"
 renderPiece Light           = "o"
 
 adjacentCells
@@ -227,3 +219,26 @@ instance FoldableWithIndex Position Grid where
 
 boardSize :: Configuration -> Int
 boardSize Config{..} = boardHeight * boardWidth
+
+deriving via WrapEq RawPiece
+  instance EquatableIn Bool RawPiece
+deriving via WrapEquatable Piece
+  instance EquatableIn Bit Piece
+
+class PieceLike a where
+  fromRawPiece :: RawPiece -> a
+
+instance PieceLike RawPiece where
+  fromRawPiece = id
+
+instance PieceLike Piece where
+  fromRawPiece (Wall (Just 0)) = Piece $ encode 0
+  fromRawPiece (Wall (Just 1)) = Piece $ encode 1
+  fromRawPiece (Wall (Just 2)) = Piece $ encode 2
+  fromRawPiece (Wall (Just 3)) = Piece $ encode 3
+  fromRawPiece (Wall (Just 4)) = Piece $ encode 4
+  fromRawPiece (Wall (Just n)) =
+    error $ "Numbered wall must be of range 0-4, but got: " ++ show n
+  fromRawPiece (Wall Nothing)  = Piece $ encode 5
+  fromRawPiece Light           = Piece $ encode 6
+  fromRawPiece Free            = Piece $ encode 7

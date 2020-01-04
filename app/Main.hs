@@ -51,12 +51,12 @@ main = do
       , "----"
       ]
 
-  (res, msol) <- solveWith cryptominisat5 (problemWith partial input)
-  if HM.size partial == boardWidth input * boardHeight input
-    then if res == Unsatisfied
-         then error $ "Solution given by heuristics is wrong!\n\t" ++ show msol
-         else putStrLn "We successfuly solved the puzzle only with heuristics!"
+  if HM.size partial == boardSize input
+    then if validSolution input partial
+         then putStrLn "We successfuly solved the puzzle only with heuristics!"
+         else error "Solution given by heuristics is wrong!"
     else do
+      (res, msol) <- solveWith cryptominisat5 (problemWith partial input)
       when (res /= Satisfied) (fail (show res))
       case msol of
         []  -> fail ("No solution found: " ++ show msol)
