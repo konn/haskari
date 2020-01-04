@@ -1,7 +1,7 @@
-{-# LANGUAGE DeriveAnyClass, DeriveDataTypeable, DeriveGeneric     #-}
-{-# LANGUAGE DeriveTraversable, DerivingVia, MultiParamTypeClasses #-}
-{-# LANGUAGE PatternSynonyms, RecordWildCards, StandaloneDeriving  #-}
-{-# LANGUAGE TypeFamilies                                          #-}
+{-# LANGUAGE DeriveAnyClass, DeriveDataTypeable, DeriveGeneric          #-}
+{-# LANGUAGE DeriveTraversable, DerivingVia, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses, PatternSynonyms, RecordWildCards    #-}
+{-# LANGUAGE StandaloneDeriving, TypeFamilies                           #-}
 module Puzzles.Akari.Types where
 import           Control.Applicative
 import           Control.Lens
@@ -210,6 +210,8 @@ guardRange cfg pos
 
 newtype Grid a = Grid { runGrid :: Vector (Vector a) }
   deriving (Functor, Foldable, Traversable, Generic)
+  deriving newtype (Show, Eq, Ord)
+
 instance Wrapped (Grid a)
 
 instance FoldableWithIndex Position Grid where

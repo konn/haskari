@@ -1,5 +1,7 @@
-{-# LANGUAGE BangPatterns, LambdaCase, RecordWildCards, TupleSections #-}
+{-# LANGUAGE BangPatterns, DeriveGeneric, LambdaCase, RecordWildCards #-}
+{-# LANGUAGE TupleSections, ViewPatterns                              #-}
 module Puzzles.Akari.Heuristics where
+import           Control.Arrow              ((&&&))
 import qualified Control.Foldl              as L
 import           Control.Foldl.Extra.Vector
 import           Control.Lens
@@ -11,6 +13,7 @@ import qualified Data.List                  as List
 import           Data.Maybe
 import qualified Data.Vector                as V
 import qualified Data.Vector.Mutable        as MV
+import           GHC.Generics
 import           Prelude
 import           Puzzles.Akari.Types
 
@@ -19,7 +22,7 @@ type PartialSolution = HM.HashMap Position RawPiece
 -- | With initial configuration and derived partial solution so far,
 --   returns *newly* derived partial solutions.
 --   The return solution need not extend the given one.
-type Heuristics = Configuration -> PartialSolution -> PartialSolution
+type Heuristics = Configuration -> Hint -> PartialSolution -> PartialSolution
 
 defaultHeuristics :: [Heuristics]
 defaultHeuristics =
@@ -35,7 +38,8 @@ applyHeuristics hs cnf =
   where
     !heuri = mconcat hs cnf
     go (!acc) =
-      let new = heuri acc
+      let hint = buildHint cnf acc
+          new = heuri hint acc
       in if HM.null $ new `HM.difference` acc
       then acc
       else go (acc `HM.union` new)
@@ -56,39 +60,41 @@ initialSolution Config{..} = Wall <$> walls
   @
 -}
 pigeonhole3 :: Heuristics
-pigeonhole3 cfg =
-  L.fold
-    (L.handles L.folded $ lmap (,Free) L.hashMap)
-  . HM.mapMaybeWithKey
-    (\pos -> \case
-        Wall (Just 3) ->
-          Just $ diagonalCells cfg pos
-        _ -> Nothing
+pigeonhole3 Config{..} Hint{..} _ =
+  L.foldOver (ifolded.withIndex)
+    (lmap
+      (\(pos, mn) -> do
+        3 <- mn
+        let conn = runGrid connection ! pos
+        return $ diagonals conn
+      )
+    $ L.handles (_Just.folded)
+    $ lmap (,Free) L.hashMap
     )
+    walls
 
 -- | Generalisation of 'pigeonhole3'.
 --   Also applicable to walls with label other than 3.
 pigeonhole :: Heuristics
-pigeonhole cfg@Config{..} partial =
-  L.fold
-    (L.handles folded
+pigeonhole _ Hint{..} = const $
+  L.foldOver (ifolded.withIndex)
+    ( lmap
+        (\(pos, SlotInfo{..}) -> do
+          let conn = runGrid connection ! pos
+              diags =
+                HS.filter
+                  ( (== 2) . HS.size
+                  . HS.intersection openSlots
+                  . adjacents . (runGrid connection !)
+                  )
+                $ diagonals conn
+          guard $ HS.size openSlots == remainingLights + 1
+          pure diags
+        )
+    $ L.handles (_Just.folded)
     $ lmap (,Free) L.hashMap
     )
-  $ HM.mapMaybeWithKey
-    (\pos -> (>>=
-      (\n -> do
-        let (_, lights, indets) = adjsLightsIndets cfg pos partial
-            diags =
-              [ d
-              | d <- diagonalCells cfg pos
-              , length (adjacentCells cfg d `List.intersect` indets)
-                  == 2
-              ]
-        guard $ length indets == fromIntegral n - length lights + 1
-        pure diags
-      ))
-    )
-    walls
+    slotInfo
 
 -- | Marks all cells as free, which is
 --
@@ -96,14 +102,14 @@ pigeonhole cfg@Config{..} partial =
 --     * Adjacent empty cells, which already has
 --       maximal number of adjacent lights.
 triviallyFree :: Heuristics
-triviallyFree cfg partial =
-  let segs = classifySegments cfg
+triviallyFree cfg Hint{..} partial =
+  let segs = segments
   in L.fold
       (L.handles L.folded $ lmap (,Free) L.hashMap)
     $ HM.mapMaybeWithKey
       (\pos -> \case
         Light ->
-          Just $ HS.delete pos (segs ! pos)
+          Just $ HS.delete pos (runGrid segs ! pos)
         Wall (Just n) -> do
           let (_, lits, indets) = adjsLightsIndets cfg pos partial
           guard $ length lits == fromIntegral n
@@ -115,9 +121,8 @@ triviallyFree cfg partial =
 -- | If there is only one indeterminate cell in the segment,
 --   then it must be a light.
 onlySlot :: Heuristics
-onlySlot cfg partial =
-  let segs = classifySegments cfg
-  in L.fold
+onlySlot _ Hint{..} partial =
+  L.fold
       (lmap
           (\adjs -> do
             ([v], ps) <-
@@ -128,25 +133,21 @@ onlySlot cfg partial =
           )
       $ L.handles _Just L.hashMap
       )
-     $ Grid segs
-
+      segments
 
 -- | If there are exactly the same number of indeterminate cells
---   around a wall as remaining lights, marm them all as a light.
+--   around a wall as remaining lights, mark them all as a light.
 maximal :: Heuristics
-maximal cfg partial =
-  L.fold
-    (L.handles L.folded $ lmap (, Light) L.hashMap)
-  $ HM.mapMaybeWithKey
-      (\pos ans ->
-        case ans of
-          Wall mn -> mn >>= \n -> do
-            let (_, lits, indets) = adjsLightsIndets cfg pos partial
-            guard $ length lits + length indets == fromIntegral n
-            pure indets
-          _ -> Nothing
-      )
-  partial
+maximal _ Hint{..} = const $
+  L.foldOver (ifolded.withIndex)
+    (lmap
+        (\(_, SlotInfo{..}) -> do
+          guard $ HS.size openSlots == remainingLights
+          pure openSlots
+        )
+    $ L.handles (_Just . folded)
+    $ lmap (,Light) L.hashMap)
+    slotInfo
 
 adjsLightsIndets
   :: Configuration
@@ -198,3 +199,55 @@ renderPartial cfg partial =
 renderPiece' :: RawPiece -> String
 renderPiece' Free = "."
 renderPiece' p    = renderPiece p
+
+data SlotInfo =
+  SlotInfo { openSlots       :: !(HS.HashSet Position)
+           , remainingLights :: !Int
+           }
+  deriving (Show, Eq, Ord, Generic)
+
+data CellConnection =
+  CellConn { adjacents :: !(HS.HashSet Position)
+           , diagonals :: !(HS.HashSet Position)
+           }
+  deriving (Show, Eq, Ord, Generic)
+
+data Hint =
+  Hint { slotInfo   :: HM.HashMap Position SlotInfo
+       , connection :: Grid CellConnection
+       , segments   :: Grid (HS.HashSet Position)
+       }
+  deriving (Show, Eq, Ord, Generic)
+
+buildHint
+  :: Configuration -> PartialSolution
+  -> Hint
+buildHint cfg@Config{..} partial = Hint{..}
+  where
+    !segments = Grid $ classifySegments cfg
+    !connection =
+      Grid
+      $ generateBoard cfg $ \pos ->
+         CellConn
+            { adjacents = HS.fromList $ adjacentCells cfg pos
+            , diagonals = HS.fromList $ diagonalCells cfg pos
+            }
+
+    !slotInfo =
+      HM.mapMaybeWithKey
+        (\pos mn -> mn >>= \(fromIntegral -> n) -> do
+            let adjs = adjacents
+                     $ runGrid connection ! pos
+                (openSlots, litCount) =
+                  L.fold
+                    ( lmap (id &&& (`HM.lookup` partial))
+                    $ (,) <$> L.prefilter (isNothing . snd)
+                                (lmap fst L.hashSet)
+                          <*> L.prefilter ((== Just Light) . snd)
+                                (lmap fst L.length)
+                     )
+                     adjs
+                remainingLights = n - litCount
+            return SlotInfo{..}
+        )
+      walls
