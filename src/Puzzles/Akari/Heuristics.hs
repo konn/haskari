@@ -26,7 +26,12 @@ type Heuristics = Configuration -> Hint -> PartialSolution -> PartialSolution
 
 defaultHeuristics :: [Heuristics]
 defaultHeuristics =
-  [triviallyFree, maximal, onlySlot, pigeonhole3, pigeonhole]
+  [ triviallyFree
+  , maximal
+  , onlySlot
+  , pigeonhole
+  , pigeonholeBacktrack
+  ]
 
 -- | Applies heuristics successively until fixed-point.
 applyHeuristics
@@ -266,3 +271,33 @@ buildHint cfg@Config{..} partial = updateHint cfg partial Hint{..}
     !segments = classifySegments cfg
     connection = Grid V.empty
     slotInfo = mempty
+
+-- | 1-step backtracking with pigeonhole princple.
+--
+--   If a light cell prevents another wall from
+--   having enough lights around it,
+--   it must be an empty cell.
+pigeonholeBacktrack :: Heuristics
+pigeonholeBacktrack _ Hint{..} = const $
+  L.fold
+    (lmap (,Free) L.hashMap)
+  $ HS.filter
+    (\pos ->
+      let seg = HS.delete pos $ segments ! pos
+          adjWalls =
+            foldMap
+              ( HM.mapWithKey (const . (slotInfo HM.!))
+              . HM.filter (maybe False $ \case { Wall Just{} -> True; _ -> False })
+              . HM.filterWithKey (\p' _ -> p' /= pos)
+              . adjacents
+              . (connection !)
+              )
+              seg
+      in any
+          (\SlotInfo{..} ->
+            remainingLights >
+              HS.size openSlots - HS.size (seg `HS.intersection` openSlots)
+          ) adjWalls
+    )
+    indeterminates
+
