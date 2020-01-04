@@ -4,7 +4,6 @@ import qualified Control.Foldl              as L
 import           Control.Foldl.Extra.Vector
 import           Control.Lens
 import           Control.Monad
-import           Data.Char
 import           Data.Foldable
 import qualified Data.HashMap.Strict        as HM
 import qualified Data.HashSet               as HS
@@ -185,7 +184,7 @@ twoTwo = mempty
 
 renderPartial :: Configuration -> PartialSolution -> String
 renderPartial cfg partial =
-  unlines $ V.toList $ V.map V.toList
+  unlines $ V.toList $ V.map fold
   $ L.foldOver (ifolded.withIndex)
       (lmap (\(Pos{..}, a) -> (posY, (posX, a)))
       $ accumWith
@@ -196,6 +195,6 @@ renderPartial cfg partial =
       )
     partial
 
-renderPiece' :: RawPiece -> Char
-renderPiece' Free = '.'
+renderPiece' :: RawPiece -> String
+renderPiece' Free = "."
 renderPiece' p    = renderPiece p

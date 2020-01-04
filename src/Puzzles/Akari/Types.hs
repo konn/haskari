@@ -140,13 +140,13 @@ initialBoard cnf = generateBoard cnf $ \pos ->
 
 render
   :: RawBoard -> String
-render = unlines . V.toList . V.map (foldMap (pure . renderPiece))
+render = unlines . V.toList . V.map (foldMap renderPiece)
 
-renderPiece :: RawPiece -> Char
-renderPiece (Wall Nothing)  = '■'
-renderPiece (Wall (Just n)) = intToDigit $ fromEnum n
-renderPiece Free            = '_'
-renderPiece Light           = '○'
+renderPiece :: RawPiece -> String
+renderPiece (Wall mn)  =
+  "\x1b[7m" ++ maybe ' ' (intToDigit . fromEnum) mn : "\x1b[0m"
+renderPiece Free            = " "
+renderPiece Light           = "o"
 
 adjacentCells
   :: Configuration -> Position -> [Position]
